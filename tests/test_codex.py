@@ -132,8 +132,35 @@ class CodexInstallerTests(unittest.TestCase):
             self.assertEqual(removed.returncode, 0, removed.stderr)
             after = config.read_text(encoding="utf-8")
             self.assertNotIn("BEGIN fable-mode", after)
-            self.assertEqual(tomllib.loads(after)["hooks"]["PreToolUse"][0]
+            after_data = tomllib.loads(after)
+            self.assertNotIn("hooks", after_data["features"])
+            self.assertEqual(after_data["hooks"]["PreToolUse"][0]
                              ["matcher"], "^Bash$")
+
+    def test_uninstall_restores_disabled_hooks_feature(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            config = root / "config.toml"
+            config.write_text("[features]\nhooks = false\n", encoding="utf-8")
+            command = [
+                sys.executable, str(INSTALLER), "--config", str(config),
+                "--skill-dir", str(ROOT),
+            ]
+            installed = subprocess.run(
+                command, text=True, encoding="utf-8", capture_output=True,
+                check=False,
+            )
+            self.assertEqual(installed.returncode, 0, installed.stderr)
+            self.assertTrue(tomllib.loads(
+                config.read_text(encoding="utf-8"))["features"]["hooks"])
+
+            removed = subprocess.run(
+                command + ["--uninstall"], text=True, encoding="utf-8",
+                capture_output=True, check=False,
+            )
+            self.assertEqual(removed.returncode, 0, removed.stderr)
+            self.assertFalse(tomllib.loads(
+                config.read_text(encoding="utf-8"))["features"]["hooks"])
 
 
 if __name__ == "__main__":

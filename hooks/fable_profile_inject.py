@@ -43,7 +43,8 @@ def choose_profile(model, lp):
     ledger_tier = read_tier(lp)
     if ledger_tier:
         return ledger_tier
-    return "throughput" if "fable" in (model or "").lower() else "conservative"
+    # Concurrency is policy and cannot be inferred from a model name.
+    return "conservative"
 
 
 def choose_routing(lp):

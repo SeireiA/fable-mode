@@ -24,7 +24,9 @@ def mkproj(with_fable=False, ledger=None, git=False):
     if with_fable:
         fd = os.path.join(d, ".fable"); os.mkdir(fd)
         if ledger is not None:
-            with open(os.path.join(fd, "LEDGER.md"), "w") as f: f.write(ledger)
+            with open(os.path.join(fd, "LEDGER.md"), "w",
+                      encoding="utf-8") as f:
+                f.write(ledger)
     return d
 
 BIG = "x" * 2000
@@ -226,51 +228,51 @@ def seed_session(sid, model):
         capture_output=True, text=True)
 
 LEDGER_OK = "- [ ] 1. a card\n"
-seed_session("fbtest-ceil-opus", "claude-opus-4-8")
+seed_session("fbtest-ceil-gpt51", "gpt-5.1-codex")
 
-# 1. opus session + spawn model=fable -> BLOCK (even small prompt, ledger present)
+# 1. GPT-5.1 Codex session + newer GPT-5.2 Codex request -> BLOCK
 d = proj(with_fable=True, git=True, ledger=LEDGER_OK)
-check("ceiling/fable-blocked", run_env(SPAWN, {"cwd": d, "session_id": "fbtest-ceil-opus",
-      "tool_name": "Agent", "tool_input": {"prompt": SMALL, "model": "fable"}}), 2)
+check("ceiling/newer-codex-blocked", run_env(SPAWN, {"cwd": d, "session_id": "fbtest-ceil-gpt51",
+      "tool_name": "Agent", "tool_input": {"prompt": SMALL, "model": "gpt-5.2-codex"}}), 2)
 
-# 2. downgrade (sonnet) -> allow
+# 2. same-generation mini model -> allow
 d = proj(with_fable=True, git=True, ledger=LEDGER_OK)
-check("ceiling/sonnet-allowed", run_env(SPAWN, {"cwd": d, "session_id": "fbtest-ceil-opus",
-      "tool_name": "Agent", "tool_input": {"prompt": SMALL, "model": "sonnet"}}), 0)
+check("ceiling/codex-mini-allowed", run_env(SPAWN, {"cwd": d, "session_id": "fbtest-ceil-gpt51",
+      "tool_name": "Agent", "tool_input": {"prompt": SMALL, "model": "gpt-5.1-codex-mini"}}), 0)
 
 # 3. no model param (inherit) -> allow
 d = proj(with_fable=True, git=True, ledger=LEDGER_OK)
-check("ceiling/inherit-allowed", run_env(SPAWN, {"cwd": d, "session_id": "fbtest-ceil-opus",
+check("ceiling/inherit-allowed", run_env(SPAWN, {"cwd": d, "session_id": "fbtest-ceil-gpt51",
       "tool_name": "Agent", "tool_input": {"prompt": SMALL}}), 0)
 
 # 4. FABLE_ESCALATION=on -> allow upward
 d = proj(with_fable=True, git=True, ledger=LEDGER_OK)
-check("ceiling/escalation-on-allows", run_env(SPAWN, {"cwd": d, "session_id": "fbtest-ceil-opus",
-      "tool_name": "Agent", "tool_input": {"prompt": SMALL, "model": "fable"}},
+check("ceiling/escalation-on-allows", run_env(SPAWN, {"cwd": d, "session_id": "fbtest-ceil-gpt51",
+      "tool_name": "Agent", "tool_input": {"prompt": SMALL, "model": "gpt-5.2-codex"}},
       env={"FABLE_ESCALATION": "on"}), 0)
 
 # 5. unknown session model -> fail-open allow
 d = proj(with_fable=True, git=True, ledger=LEDGER_OK)
 check("ceiling/unknown-session-failopen", run_env(SPAWN, {"cwd": d,
       "session_id": "fbtest-ceil-nocache", "tool_name": "Agent",
-      "tool_input": {"prompt": SMALL, "model": "fable"}}), 0)
+      "tool_input": {"prompt": SMALL, "model": "gpt-5.2-codex"}}), 0)
 
-# 6. Workflow script with model: 'fable' literal -> BLOCK
+# 6. Workflow script with a newer Codex model literal -> BLOCK
 d = proj(with_fable=True, git=True, ledger=LEDGER_OK)
 check("ceiling/workflow-script-blocked", run_env(SPAWN, {"cwd": d,
-      "session_id": "fbtest-ceil-opus", "tool_name": "Workflow",
-      "tool_input": {"script": "await agent('x', {model: 'fable'})"}}), 2)
+      "session_id": "fbtest-ceil-gpt51", "tool_name": "Workflow",
+      "tool_input": {"script": "await agent('x', {model: 'gpt-5.2-codex'})"}}), 2)
 
 # 7. REGRESSION: prose mentioning 'fable-mode' (no model key) must NOT block
 d = proj(with_fable=True, git=True, ledger=LEDGER_OK)
 check("ceiling/no-false-positive-on-prose", run_env(SPAWN, {"cwd": d,
-      "session_id": "fbtest-ceil-opus", "tool_name": "Workflow",
+      "session_id": "fbtest-ceil-gpt51", "tool_name": "Workflow",
       "tool_input": {"script": "// follow the fable-mode protocol strictly"}}), 0)
 
 # 8. no .fable dir -> ceiling inert even for model=fable
 d = proj(git=True)
-check("ceiling/no-fable-inert", run_env(SPAWN, {"cwd": d, "session_id": "fbtest-ceil-opus",
-      "tool_name": "Agent", "tool_input": {"prompt": SMALL, "model": "fable"}}), 0)
+check("ceiling/no-fable-inert", run_env(SPAWN, {"cwd": d, "session_id": "fbtest-ceil-gpt51",
+      "tool_name": "Agent", "tool_input": {"prompt": SMALL, "model": "gpt-5.2-codex"}}), 0)
 
 # ---- PAUSED semantics ----
 # a. open card + PAUSED -> close guard allows stop
@@ -285,8 +287,8 @@ check("paused/spawn-gate-off", run(SPAWN, {"cwd": d, "tool_name": "Agent",
 # c. PAUSED does NOT disable the model ceiling (quota protection stays)
 d = proj(with_fable=True, git=True, ledger="- [ ] 1. card\nPAUSED: side work\n")
 check("paused/ceiling-still-blocks", run_env(SPAWN, {"cwd": d,
-      "session_id": "fbtest-ceil-opus", "tool_name": "Agent",
-      "tool_input": {"prompt": SMALL, "model": "fable"}}), 2)
+      "session_id": "fbtest-ceil-gpt51", "tool_name": "Agent",
+      "tool_input": {"prompt": SMALL, "model": "gpt-5.2-codex"}}), 2)
 
 # ---- Rigor floor (2026-07-08) ----
 # 1. stale closed cards must NOT unlock new fan-out: all-closed + big -> BLOCK

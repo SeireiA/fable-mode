@@ -32,20 +32,20 @@ def ctx(out):
 
 # 1. no .fable -> exit 0, empty stdout
 d = proj(with_fable=False)
-rc, out = run({"cwd": d, "model": "claude-fable-5", "hook_event_name": "SessionStart"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex", "hook_event_name": "SessionStart"})
 check("inject/no-fable-silent", rc == 0 and out.strip() == "")
 
-# 2. .fable + fable model -> throughput
+# 2. .fable + Codex model -> conservative default
 d = proj(with_fable=True)
-rc, out = run({"cwd": d, "model": "claude-fable-5"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"})
 c = ctx(out)
-check("inject/fable-model-throughput", rc == 0 and c and "THROUGHPUT" in c and "claude-fable-5" in c)
+check("inject/codex-model-conservative", rc == 0 and c and "CONSERVATIVE" in c and "gpt-5.1-codex" in c)
 
-# 3. .fable + opus model -> conservative
+# 3. .fable + Codex model -> conservative
 d = proj(with_fable=True)
-rc, out = run({"cwd": d, "model": "claude-opus-4-8"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"})
 c = ctx(out)
-check("inject/opus-model-conservative", rc == 0 and c and "CONSERVATIVE" in c)
+check("inject/codex-model-remains-conservative", rc == 0 and c and "CONSERVATIVE" in c)
 
 # 4. .fable + NO model field -> conservative default
 d = proj(with_fable=True)
@@ -53,27 +53,27 @@ rc, out = run({"cwd": d})
 c = ctx(out)
 check("inject/no-model-defaults-conservative", rc == 0 and c and "CONSERVATIVE" in c and "unknown" in c)
 
-# 5. env override throughput on opus model
+# 5. env override throughput on Codex model
 d = proj(with_fable=True)
-rc, out = run({"cwd": d, "model": "claude-opus-4-8"}, env={"FABLE_MODE_PROFILE": "throughput"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"}, env={"FABLE_MODE_PROFILE": "throughput"})
 c = ctx(out)
 check("inject/env-override-throughput", rc == 0 and c and "THROUGHPUT" in c)
 
 # 6. env override conservative on fable model
 d = proj(with_fable=True)
-rc, out = run({"cwd": d, "model": "claude-fable-5"}, env={"FABLE_MODE_PROFILE": "conservative"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"}, env={"FABLE_MODE_PROFILE": "conservative"})
 c = ctx(out)
 check("inject/env-override-conservative", rc == 0 and c and "CONSERVATIVE" in c)
 
 # 7. context recovery: open ledger items surfaced
 d = proj(with_fable=True, ledger="- [ ] 1. finish parser\n- [x] 2. done\n- [ ] 3. write docs\n")
-rc, out = run({"cwd": d, "model": "claude-opus-4-8"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"})
 c = ctx(out)
 check("inject/context-recovery", rc == 0 and c and "Context recovery" in c and "finish parser" in c and "write docs" in c and "2 open item(s)" in c)
 
 # 8. valid JSON envelope shape
 d = proj(with_fable=True)
-rc, out = run({"cwd": d, "model": "claude-fable-5"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"})
 try:
     j = json.loads(out); ok = j["hookSpecificOutput"]["hookEventName"] == "SessionStart"
 except Exception: ok = False
@@ -85,63 +85,63 @@ check("inject/malformed-failopen", p.returncode == 0)
 
 # 10. non-Fable session gets the no-escalation / graceful-degradation posture
 d = proj(with_fable=True)
-rc, out = run({"cwd": d, "model": "claude-opus-4-8"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"})
 c = ctx(out)
 check("inject/conservative-no-escalation", rc == 0 and c and "do NOT defer" in c and "FABLE_ESCALATION" in c)
 
 # 11. Fable/throughput session does NOT get the no-escalation line
 d = proj(with_fable=True)
-rc, out = run({"cwd": d, "model": "claude-fable-5"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"}, env={"FABLE_MODE_PROFILE": "throughput"})
 c = ctx(out)
 check("inject/throughput-no-escalation-absent", rc == 0 and c and "do NOT defer" not in c)
 
-# 12. FABLE_ESCALATION=on suppresses the no-escalation line even for opus
+# 12. FABLE_ESCALATION=on suppresses the no-escalation line for Codex
 d = proj(with_fable=True)
-rc, out = run({"cwd": d, "model": "claude-opus-4-8"}, env={"FABLE_ESCALATION": "on"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"}, env={"FABLE_ESCALATION": "on"})
 c = ctx(out)
 check("inject/escalation-on-suppresses", rc == 0 and c and "CONSERVATIVE" in c and "do NOT defer" not in c)
 
 # 13. Fable-5 habits injected on conservative tier
 d = proj(with_fable=True)
-rc, out = run({"cwd": d, "model": "claude-opus-4-8"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"})
 c = ctx(out)
 check("inject/habits-conservative", rc == 0 and c and "Fable-5 habits" in c and "audit every progress claim" in c)
 
 # 14. Fable-5 habits injected on throughput tier too (universal)
 d = proj(with_fable=True)
-rc, out = run({"cwd": d, "model": "claude-fable-5"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"}, env={"FABLE_MODE_PROFILE": "throughput"})
 c = ctx(out)
 check("inject/habits-throughput", rc == 0 and c and "Fable-5 habits" in c)
 
 # 15/16. capability-matched routing injected on both tiers, with safety net
 d = proj(with_fable=True)
-rc, out = run({"cwd": d, "model": "claude-opus-4-8"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"})
 c = ctx(out)
 check("inject/routing-conservative", rc == 0 and c and "Model routing" in c
       and "CAPPED AT this session's model" in c and "verifier must be at least as strong" in c)
 d = proj(with_fable=True)
-rc, out = run({"cwd": d, "model": "claude-fable-5"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"}, env={"FABLE_MODE_PROFILE": "throughput"})
 c = ctx(out)
 check("inject/routing-throughput", rc == 0 and c and "Model routing" in c
       and "When unsure, inherit the session model" in c)
 
 # 17. idle ledger (all closed) -> minimal injection, small tasks not taxed
 d = proj(with_fable=True, ledger="- [x] 1. done\n- [~] 2. skip -- deferred: n/a\n")
-rc, out = run({"cwd": d, "model": "claude-opus-4-8"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"})
 c = ctx(out)
 check("inject/idle-minimal", rc == 0 and c and "ledger idle" in c
       and "Model routing" not in c and len(c) < 600)
 
 # 18. PAUSED line -> one-liner, ceiling still mentioned
 d = proj(with_fable=True, ledger="- [ ] 1. big card\nPAUSED: side work for user\n")
-rc, out = run({"cwd": d, "model": "claude-opus-4-8"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"})
 c = ctx(out)
 check("inject/paused-oneliner", rc == 0 and c and "PAUSED" in c
       and "model ceiling" in c and "Context recovery" not in c and len(c) < 400)
 
 # 19. Fable-5 strengths round: anti-gold-plating + act-don't-overplan injected
 d = proj(with_fable=True)
-rc, out = run({"cwd": d, "model": "claude-opus-4-8"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"})
 c = ctx(out)
 check("inject/scope-and-act-habits", rc == 0 and c and "simplest thing that works" in c
       and "enough information to act" in c)
@@ -151,28 +151,28 @@ check("inject/scope-and-act-habits", rc == 0 and c and "simplest thing that work
 # removed — global mutable state leaking between projects is not user-intended
 # context; per-project docs/PROGRESS.md gotchas are the supported memory).
 d = proj(with_fable=True)
-rc, out = run({"cwd": d, "model": "claude-opus-4-8"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"})
 c = ctx(out)
 check("inject/no-cross-project-memory", rc == 0 and c and "Lessons from previous" not in c)
 
 # 21-24. routing profiles: env override, ledger directive, default, invariant
 d = proj(with_fable=True)
-rc, out = run({"cwd": d, "model": "claude-opus-4-8"}, env={"FABLE_ROUTING": "quality"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"}, env={"FABLE_ROUTING": "quality"})
 c = ctx(out)
 check("inject/routing-quality-env", rc == 0 and c and "[QUALITY" in c and "no downgrades" in c)
 
 d = proj(with_fable=True)
-rc, out = run({"cwd": d, "model": "claude-opus-4-8"}, env={"FABLE_ROUTING": "frugal"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"}, env={"FABLE_ROUTING": "frugal"})
 c = ctx(out)
 check("inject/routing-frugal-env", rc == 0 and c and "[FRUGAL" in c and "ONE tier down" in c)
 
 d = proj(with_fable=True, ledger="ROUTING: frugal\n- [ ] 1. card -- acceptance: `t`\n")
-rc, out = run({"cwd": d, "model": "claude-opus-4-8"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"})
 c = ctx(out)
 check("inject/routing-ledger-directive", rc == 0 and c and "[FRUGAL" in c)
 
 d = proj(with_fable=True)
-rc, out = run({"cwd": d, "model": "claude-opus-4-8"}, env={"FABLE_ROUTING": "bogus"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"}, env={"FABLE_ROUTING": "bogus"})
 c = ctx(out)
 check("inject/routing-default-balanced-and-invariant",
       rc == 0 and c and "[BALANCED]" in c
@@ -181,18 +181,18 @@ check("inject/routing-default-balanced-and-invariant",
 
 # 25-27. TIER directive + multitask-within-cap
 d = proj(with_fable=True, ledger="TIER: throughput\n- [ ] 1. card -- acceptance: `t`\n")
-rc, out = run({"cwd": d, "model": "claude-opus-4-8"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"})
 c = ctx(out)
 check("inject/tier-ledger-flips-throughput", rc == 0 and c and "THROUGHPUT" in c)
 
 d = proj(with_fable=True, ledger="TIER: throughput\n- [ ] 1. card -- acceptance: `t`\n")
-rc, out = run({"cwd": d, "model": "claude-opus-4-8"},
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"},
               env={"FABLE_MODE_PROFILE": "conservative"})
 c = ctx(out)
 check("inject/env-beats-ledger-tier", rc == 0 and c and "CONSERVATIVE" in c)
 
 d = proj(with_fable=True)
-rc, out = run({"cwd": d, "model": "claude-opus-4-8"})
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"})
 c = ctx(out)
 check("inject/conservative-multitasks-within-cap", rc == 0 and c
       and "MULTITASK within the cap" in c and "background subagents" in c)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""fable-mode delegation guard for Claude Code and Codex.
+"""fable-mode delegation guard for Codex.
 
 Two enforcement duties when the project has opted in (`.fable/` dir present):
 
@@ -8,7 +8,7 @@ Two enforcement duties when the project has opted in (`.fable/` dir present):
    closed cards from a finished round don't unlock new fan-out).
    Small spawns and forks are exempt.
 2. Model ceiling: block any spawn that requests a model STRONGER than the
-   session's (haiku < sonnet < opus < fable) — fable-mode exists to get
+   session's GPT-5/Codex tier — fable-mode exists to get
    Fable-5-grade results without reaching upward. The session model comes from
    the Profile Injector's per-session cache; unknown either side -> fail-open.
    FABLE_ESCALATION=on disables the ceiling.
@@ -20,7 +20,7 @@ mechanically cancel the start, so this path is intentionally advisory.
 
 Inert unless a `.fable/` dir is found. Fail-open on any error.
 
-Exit codes: 0 = allow the tool call; 2 = block (stderr shown to Claude).
+Exit codes: 0 = allow or inject Codex context; 2 = block a pre-tool call.
 Env:
   FABLE_SPAWN_MIN_CHARS  minimum payload length to be considered "detailed"
                          (default 1500). Below this, the design gate passes.
@@ -59,7 +59,7 @@ def is_fork(tool_input):
     return False
 
 
-# Key-prefixed on purpose: matches model: 'fable' / model="claude-fable-5"
+# Key-prefixed on purpose: matches model: 'gpt-5.2-codex'
 # inside a Workflow script, but can NOT false-positive on prose like
 # "fable-mode" (no model key in front of it).
 _SCRIPT_MODEL_RE = re.compile(r"""model\s*[:=]\s*['"]([^'"]+)['"]""")
@@ -103,7 +103,7 @@ def codex_subagent_start(data):
         "[fable-mode] DESIGN GATE WARNING: this project is armed with .fable/, "
         "but .fable/LEDGER.md has no open task card. Codex cannot cancel a "
         "built-in subagent from SubagentStart. If this is a substantial "
-        "delegated task, do not implement it: return immediately and ask the "
+        "delegated task, you MUST NOT implement it: return immediately and ask the "
         "lead agent to create docs/SPEC.md plus an open ledger card with a "
         "machine-checkable acceptance test. A genuinely small, bounded "
         "subtask may continue."

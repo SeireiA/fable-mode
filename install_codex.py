@@ -19,6 +19,7 @@ import tomllib
 
 BEGIN = "# BEGIN fable-mode Codex hooks"
 END = "# END fable-mode Codex hooks"
+PREVIOUS_HOOKS = "# fable-mode previous features.hooks: "
 
 HOOKS = (
     ("SessionStart", "startup|resume|clear|compact",
@@ -36,8 +37,8 @@ def toml_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def hook_block(skill_dir: Path) -> str:
-    lines = [BEGIN]
+def hook_block(skill_dir: Path, previous_hooks: str) -> str:
+    lines = [BEGIN, PREVIOUS_HOOKS + previous_hooks]
     for event, matcher, filename, status in HOOKS:
         script = (skill_dir / "hooks" / filename).resolve()
         posix_script = script.as_posix()
@@ -95,6 +96,61 @@ def enable_hooks_feature(text: str) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def hooks_feature_state(text: str) -> str:
+    data = tomllib.loads(text) if text.strip() else {}
+    features = data.get("features", {})
+    if "hooks" not in features:
+        return "missing"
+    return "true" if features["hooks"] is True else "false"
+
+
+def saved_hooks_feature_state(text: str) -> str | None:
+    pattern = re.compile(
+        rf"(?m)^\s*{re.escape(PREVIOUS_HOOKS)}(true|false|missing)\s*$"
+    )
+    match = pattern.search(text)
+    return match.group(1) if match else None
+
+
+def restore_hooks_feature(text: str, state: str) -> str:
+    if state == "true":
+        return enable_hooks_feature(text)
+    if state == "false":
+        lines = enable_hooks_feature(text).splitlines()
+        table_start = next(
+            i for i, line in enumerate(lines) if line.strip() == "[features]"
+        )
+        table_end = next(
+            (i for i in range(table_start + 1, len(lines))
+             if lines[i].lstrip().startswith("[")),
+            len(lines),
+        )
+        for i in range(table_start + 1, table_end):
+            if re.match(r"^\s*hooks\s*=", lines[i]):
+                indent = lines[i][:len(lines[i]) - len(lines[i].lstrip())]
+                lines[i] = indent + "hooks = false"
+                break
+        return "\n".join(lines).rstrip() + "\n"
+
+    lines = text.splitlines()
+    table_start = next(
+        (i for i, line in enumerate(lines) if line.strip() == "[features]"),
+        None,
+    )
+    if table_start is None:
+        return text.rstrip() + "\n"
+    table_end = next(
+        (i for i in range(table_start + 1, len(lines))
+         if lines[i].lstrip().startswith("[")),
+        len(lines),
+    )
+    lines[table_start + 1:table_end] = [
+        line for line in lines[table_start + 1:table_end]
+        if not re.match(r"^\s*hooks\s*=", line)
+    ]
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def validated(text: str, label: str) -> None:
     try:
         tomllib.loads(text)
@@ -108,10 +164,16 @@ def install(config: Path, skill_dir: Path, uninstall: bool) -> bool:
     if original.strip():
         validated(original, str(config))
 
+    saved_state = saved_hooks_feature_state(original)
     updated = remove_marked_block(original)
-    if not uninstall:
+    if uninstall:
+        if saved_state is not None:
+            updated = restore_hooks_feature(updated, saved_state)
+    else:
+        previous_state = saved_state or hooks_feature_state(updated)
         updated = enable_hooks_feature(updated)
-        updated = updated.rstrip() + "\n\n" + hook_block(skill_dir)
+        updated = updated.rstrip() + "\n\n" + hook_block(
+            skill_dir, previous_state)
     validated(updated, "generated Codex config")
 
     if updated == original:

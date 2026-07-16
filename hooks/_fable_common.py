@@ -67,14 +67,19 @@ def ledger_path(fable_dir):
 
 # --- model-tier ranking & per-session model cache (for the model ceiling) ---
 
-TIER_ORDER = ("haiku", "sonnet", "opus", "fable")
+_CODEX_MODEL_RE = re.compile(
+    r"(?:^|[/_-])(?:gpt-)?(5)(?:[.-](\d+))?(?:-codex)?(?:-(mini))?(?:$|[/_-])"
+)
 
 
 def model_tier(model_str):
-    """Rank a model string by capability keyword; None if unrecognized."""
+    """Rank a GPT-5/Codex model; return None for unknown model families."""
     s = (model_str or "").lower()
-    tiers = [i for i, k in enumerate(TIER_ORDER) if k in s]
-    return max(tiers) if tiers else None
+    match = _CODEX_MODEL_RE.search(s)
+    if not match:
+        return None
+    minor = int(match.group(2) or 0)
+    return minor * 2 + (0 if match.group(3) else 1)
 
 
 def _sessions_dir():
