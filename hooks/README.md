@@ -1,84 +1,80 @@
-# fable-mode guard hooks for Codex
+# 面向 Codex 的 fable-mode 守卫 Hooks
 
-This directory contains the Codex-compatible guard hooks. The repository is
-derived from [`cozytab/fable5-mode`](https://github.com/cozytab/fable5-mode),
-whose hook configuration is not compatible with the Codex Hooks mechanism.
+本目录包含适配 Codex 的守卫 Hooks。本仓库基于
+[`cozytab/fable5-mode`](https://github.com/cozytab/fable5-mode) 修改而来，上游 Hook
+配置格式与 Codex Hooks 机制不兼容。
 
-Install and register these hooks with:
+使用以下命令安装并注册 Hooks：
 
 ```powershell
 py -3 ../install_codex.py
 ```
 
-See [`../README.md`](../README.md) for complete installation instructions and
-[`../README.codex.zh-CN.md`](../README.codex.zh-CN.md) for adaptation details.
+完整安装说明见 [`../README.md`](../README.md)，适配细节见
+[`../README.codex.zh-CN.md`](../README.codex.zh-CN.md)。
 
-## Hook map
+## Hook 映射
 
-| Hook | Codex event | Purpose |
+| Hook | Codex 事件 | 用途 |
 |---|---|---|
-| `fable_profile_inject.py` | `SessionStart` | Inject the selected tier, workflow rules, and ledger context. |
-| `fable_spawn_guard.py` | `SubagentStart` | Inject a design-gate warning for substantial delegation without an open card. |
-| `fable_fail_streak.py` | `PostToolUse` with `Bash` | Prompt for failure attribution after every third consecutive command failure. |
-| `fable_close_guard.py` | `Stop` | Continue the turn while cards remain open or completed cards lack evidence. |
+| `fable_profile_inject.py` | `SessionStart` | 注入所选执行层级、工作规则和账本上下文。 |
+| `fable_spawn_guard.py` | `SubagentStart` | 在没有开放卡片却进行大规模委派时注入设计门禁提示。 |
+| `fable_fail_streak.py` | `PostToolUse` + `Bash` | 每连续三次命令失败后提示进行失败归因。 |
+| `fable_close_guard.py` | `Stop` | 存在开放卡片或完成卡片缺少证据时继续当前回合。 |
 
-`fable_lint.py` is a one-shot CLI rather than a hook. It checks the project
-specification and ledger for missing source tags, acceptance criteria, and
-completion evidence:
+`fable_lint.py` 是一次性检查工具，不是 Hook。它检查项目规格和账本中缺失的来源标记、
+验收条件与完成证据：
 
 ```powershell
-py -3 fable_lint.py <project_dir>
+py -3 fable_lint.py <项目目录>
 ```
 
-## Project opt-in
+## 项目级启用
 
-The scripts search upward from the current working directory for `.fable/`,
-bounded by the Git root:
+脚本会从当前工作目录向上查找 `.fable/`，并以 Git 根目录为边界：
 
-- With `.fable/`, the guards operate on the current project.
-- Without `.fable/`, the hooks pass through without changing the session.
+- 存在 `.fable/` 时，守卫对当前项目生效。
+- 不存在 `.fable/` 时，Hooks 静默放行，不改变会话行为。
 
-All scripts fail open. An unexpected script error does not block Codex.
+所有脚本都采用 fail-open 策略。脚本内部异常不会阻塞 Codex。
 
-## Ledger format
+## 账本格式
 
-`.fable/LEDGER.md` is a small state machine for the current round:
+`.fable/LEDGER.md` 是当前工作轮次的小型状态机：
 
 ```text
-- [ ] 1. open card with a machine-checkable acceptance test
-- [x] 2. completed card -- evidence: pytest 21/21
-- [~] 3. deferred card -- deferred: reason
-PAUSED: reason
+- [ ] 1. 开放卡片，并包含可由机器检查的验收条件
+- [x] 2. 已完成卡片 -- evidence: pytest 21/21
+- [~] 3. 已延期卡片 -- deferred: 原因
+PAUSED: 原因
 ROUTING: balanced
 TIER: conservative
 ```
 
-- `- [ ]` is open and prevents the turn from closing.
-- `- [x]` is complete and requires a substantive evidence marker.
-- `- [~]` is explicitly deferred and closed for the current round.
-- `PAUSED: reason` temporarily disables workflow enforcement.
-- `ROUTING` selects `quality`, `balanced`, or `frugal` routing.
-- `TIER` selects `throughput` or `conservative` concurrency.
+- `- [ ]` 表示开放，会阻止当前回合结束。
+- `- [x]` 表示完成，并要求提供有效的证据标记。
+- `- [~]` 表示已明确延期，本轮视为关闭。
+- `PAUSED: 原因` 暂时停用工作流程守卫。
+- `ROUTING` 可选择 `quality`、`balanced` 或 `frugal` 路由策略。
+- `TIER` 可选择 `throughput` 或 `conservative` 并发层级。
 
-`SPEC.md` and `PROGRESS.md` remain durable project documents. The ledger only
-tracks the enforcement state for the current round.
+`SPEC.md` 和 `PROGRESS.md` 是持久化项目文档。账本只保存当前轮次的执行状态。
 
-## Current limitation
+## 当前限制
 
-`SubagentStart` does not provide a way to cancel a built-in subagent. The
-delegation guard therefore injects an advisory design-gate message after start.
-The other mapped events support their intended enforcement behavior.
+`SubagentStart` 事件不能取消已经启动的内置子代理。因此，委派守卫只能在启动后注入提示，
+无法实现启动前的硬拦截。其他已映射事件可以执行预期的守卫行为。
 
-## Safety
+## 安全设计
 
-- Hooks are inactive outside opted-in projects.
-- The close guard is loop-safe.
-- Hook exceptions pass through.
-- Session state is stored under the temporary directory and expires.
+- 未选择启用的项目不受 Hooks 影响。
+- Close Guard 具备循环保护。
+- Hook 异常会直接放行。
+- 会话状态保存在临时目录中，并会自动过期。
 
-## Tests
+## 测试
 
-Run the standard-library test suite from the repository root:
+在仓库根目录运行仅依赖 Python 标准库的测试：
 
 ```powershell
 py -3 tests/test_codex.py
