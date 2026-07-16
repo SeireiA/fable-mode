@@ -13,6 +13,8 @@ the ledger is PAUSED):
 
 Inert unless a `.fable/LEDGER.md` is found. Loop-safe via stop_hook_active.
 Fail-open on any error.
+Strict-runner children (`FABLE_ORCHESTRATOR_CHILD=1`) pass silently because
+the parent orchestrator owns the shared ledger and completion state.
 
 Exit codes: 0 = allow stop; 2 = block stop (stderr shown to the agent).
 """
@@ -26,10 +28,14 @@ from _fable_common import (  # noqa: E402
 )
 
 MAX_LIST = 12
+ORCHESTRATOR_CHILD_ENV = "FABLE_ORCHESTRATOR_CHILD"
 
 
 def main():
     data = read_hook_input()
+
+    if os.environ.get(ORCHESTRATOR_CHILD_ENV) == "1":
+        return 0
 
     # Prevent an infinite stop/continue loop: if we already blocked once and
     # The agent is stopping again, let it through.

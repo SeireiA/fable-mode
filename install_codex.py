@@ -12,14 +12,17 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
+import stat
 import sys
+import tempfile
 import tomllib
 
 
 BEGIN = "# BEGIN fable-mode Codex hooks"
 END = "# END fable-mode Codex hooks"
 PREVIOUS_HOOKS = "# fable-mode previous features.hooks: "
+STRICT_PROFILE_NAME = "fable-strict.config.toml"
+STRICT_PROFILE_MARKER = "# fable-mode managed strict runner profile"
 
 HOOKS = (
     ("SessionStart", "startup|resume|clear|compact",
@@ -158,6 +161,111 @@ def validated(text: str, label: str) -> None:
         raise SystemExit(f"{label} is not valid TOML: {exc}") from exc
 
 
+def atomic_write(path: Path, text: str, mode: int | None = None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    target_mode = mode
+    if target_mode is None and path.exists():
+        target_mode = stat.S_IMODE(path.stat().st_mode)
+    if target_mode is None:
+        target_mode = 0o600
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.{os.getpid()}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, target_mode)
+        with os.fdopen(
+            descriptor,
+            "w",
+            encoding="utf-8",
+            newline="\n",
+        ) as handle:
+            descriptor = -1
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if not hasattr(os, "fchmod"):
+            temporary.chmod(target_mode)
+        os.replace(temporary, path)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if temporary.exists():
+            temporary.unlink()
+
+
+def backup_current(path: Path) -> None:
+    backup = path.with_name(path.name + ".fable-mode.bak")
+    source_mode = stat.S_IMODE(path.stat().st_mode)
+    atomic_write(
+        backup,
+        path.read_text(encoding="utf-8"),
+        mode=source_mode,
+    )
+
+
+def is_managed_strict_profile(text: str) -> bool:
+    return STRICT_PROFILE_MARKER in text.splitlines()
+
+
+def strict_profile_text(skill_dir: Path) -> str:
+    python_paths = [str(skill_dir.resolve())]
+    inherited = os.environ.get("PYTHONPATH")
+    if inherited:
+        python_paths.append(inherited)
+    python_path = os.pathsep.join(python_paths)
+    return (
+        f"{STRICT_PROFILE_MARKER}\n"
+        "# Use with: codex -p fable-strict\n\n"
+        "[features]\n"
+        "multi_agent = false\n\n"
+        "[shell_environment_policy]\n"
+        f"set = {{ PYTHONPATH = {toml_string(python_path)} }}\n"
+    )
+
+
+def ensure_strict_profile_installable(profile: Path) -> None:
+    if not profile.exists():
+        return
+    original = profile.read_text(encoding="utf-8")
+    if not is_managed_strict_profile(original):
+        raise SystemExit(
+            f"{profile} is not managed by fable-mode; refusing to overwrite"
+        )
+    validated(original, str(profile))
+
+
+def install_strict_profile(profile: Path, skill_dir: Path) -> bool:
+    ensure_strict_profile_installable(profile)
+    original = profile.read_text(encoding="utf-8") if profile.exists() else ""
+    generated = strict_profile_text(skill_dir)
+    validated(generated, "generated Codex strict runner profile")
+    if original == generated:
+        return False
+
+    profile.parent.mkdir(parents=True, exist_ok=True)
+    if profile.exists():
+        backup_current(profile)
+    atomic_write(profile, generated)
+    return True
+
+
+def uninstall_strict_profile(profile: Path) -> bool:
+    if not profile.exists():
+        return False
+
+    original = profile.read_text(encoding="utf-8")
+    if not is_managed_strict_profile(original):
+        return False
+
+    backup_current(profile)
+    profile.unlink()
+    return True
+
+
 def install(config: Path, skill_dir: Path, uninstall: bool) -> bool:
     config.parent.mkdir(parents=True, exist_ok=True)
     original = config.read_text(encoding="utf-8") if config.exists() else ""
@@ -180,11 +288,47 @@ def install(config: Path, skill_dir: Path, uninstall: bool) -> bool:
         return False
 
     if config.exists():
-        backup = config.with_name(config.name + ".fable-mode.bak")
-        if not backup.exists():
-            shutil.copy2(config, backup)
-    config.write_text(updated, encoding="utf-8", newline="\n")
+        backup_current(config)
+    atomic_write(config, updated)
     return True
+
+
+def restore_snapshot(path: Path, existed: bool, text: str) -> None:
+    if existed:
+        atomic_write(path, text)
+    elif path.exists():
+        path.unlink()
+
+
+def apply_installation(
+    config: Path,
+    skill_dir: Path,
+    uninstall: bool,
+    with_strict_runner: bool,
+) -> tuple[bool, bool]:
+    strict_profile = config.parent / STRICT_PROFILE_NAME
+    config_existed = config.exists()
+    config_original = (
+        config.read_text(encoding="utf-8") if config_existed else ""
+    )
+    profile_existed = strict_profile.exists()
+    profile_original = (
+        strict_profile.read_text(encoding="utf-8")
+        if profile_existed else ""
+    )
+    try:
+        changed = install(config, skill_dir, uninstall)
+        if uninstall:
+            strict_changed = uninstall_strict_profile(strict_profile)
+        elif with_strict_runner:
+            strict_changed = install_strict_profile(strict_profile, skill_dir)
+        else:
+            strict_changed = False
+        return changed, strict_changed
+    except BaseException:
+        restore_snapshot(config, config_existed, config_original)
+        restore_snapshot(strict_profile, profile_existed, profile_original)
+        raise
 
 
 def parse_args() -> argparse.Namespace:
@@ -194,17 +338,49 @@ def parse_args() -> argparse.Namespace:
                         default=default_home / "config.toml")
     parser.add_argument("--skill-dir", type=Path,
                         default=Path(__file__).resolve().parent)
+    parser.add_argument("--with-strict-runner", action="store_true")
     parser.add_argument("--uninstall", action="store_true")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    changed = install(args.config.resolve(), args.skill_dir.resolve(),
-                      args.uninstall)
+    config = args.config.resolve()
+    skill_dir = args.skill_dir.resolve()
+    strict_profile = config.parent / STRICT_PROFILE_NAME
+    if args.with_strict_runner and not args.uninstall:
+        ensure_strict_profile_installable(strict_profile)
+
+    changed, strict_changed = apply_installation(
+        config,
+        skill_dir,
+        args.uninstall,
+        args.with_strict_runner,
+    )
+
     action = "removed" if args.uninstall else "installed"
     state = action if changed else "already up to date"
-    print(f"fable-mode Codex hooks: {state} in {args.config.resolve()}")
+    print(f"fable-mode Codex hooks: {state} in {config}")
+
+    if args.uninstall:
+        if strict_changed:
+            print(
+                "fable-mode strict runner profile: removed from "
+                f"{strict_profile}"
+            )
+        elif strict_profile.exists():
+            print(
+                "fable-mode strict runner profile: left unchanged in "
+                f"{strict_profile} (not managed by fable-mode)"
+            )
+    elif args.with_strict_runner:
+        strict_state = "installed" if strict_changed else "already up to date"
+        print(
+            "fable-mode strict runner profile: "
+            f"{strict_state} in {strict_profile}"
+        )
+        print("Run strict orchestration with: codex -p fable-strict")
+
     if not args.uninstall:
         print("Review and trust the new commands with /hooks in Codex.")
     return 0

@@ -15,7 +15,9 @@ def proj(with_fable=False, ledger=None):
     return d
 
 def run(payload, env=None):
-    e = dict(os.environ); e.update(env or {})
+    e = dict(os.environ)
+    e.pop("FABLE_ORCHESTRATOR_CHILD", None)
+    e.update(env or {})
     p = subprocess.run([sys.executable, INJ], input=json.dumps(payload),
                        capture_output=True, text=True, env=e)
     return p.returncode, p.stdout
@@ -34,6 +36,24 @@ def ctx(out):
 d = proj(with_fable=False)
 rc, out = run({"cwd": d, "model": "gpt-5.1-codex", "hook_event_name": "SessionStart"})
 check("inject/no-fable-silent", rc == 0 and out.strip() == "")
+
+# 1b. strict-runner worktrees get worker context even when .fable is absent
+d = proj(with_fable=False)
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"},
+              env={"FABLE_ORCHESTRATOR_CHILD": "1"})
+c = ctx(out)
+check("inject/orchestrator-child-without-fable", rc == 0 and c
+      and "strict-runner child" in c and len(c) < 400)
+
+# 1c. child context never imports parent ledger state or routing policy
+d = proj(with_fable=True, ledger="ROUTING: frugal\n- [ ] 1. parent card\n")
+rc, out = run({"cwd": d, "model": "gpt-5.1-codex"},
+              env={"FABLE_ORCHESTRATOR_CHILD": "1"})
+c = ctx(out)
+check("inject/orchestrator-child-context-isolated", rc == 0 and c
+      and "strict-runner child" in c and "Context recovery" not in c
+      and "Model routing" not in c and "parent card" not in c
+      and len(c) < 400)
 
 # 2. .fable + Codex model -> conservative default
 d = proj(with_fable=True)

@@ -14,7 +14,11 @@ small tasks aren't taxed:
 Also caches {session_id -> model} for hook runtimes that do not include the
 active model on every event.
 
-Inert unless `.fable/` is found. Fail-open: any error -> exit 0, no output.
+Strict-runner children (`FABLE_ORCHESTRATOR_CHILD=1`) receive only a short
+worker context. The parent orchestrator owns ledger state and routing.
+
+Except for strict-runner child context, inert unless `.fable/` is found.
+Fail-open: any error -> exit 0, no output.
 Tier: model contains "fable" -> throughput, else conservative
 (env FABLE_MODE_PROFILE=auto|conservative|throughput overrides).
 FABLE_ESCALATION=on marks a stronger tier as genuinely available.
@@ -33,6 +37,13 @@ from _fable_common import (  # noqa: E402
 SKILL = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "SKILL.md")
 MAX_LIST = 12
+ORCHESTRATOR_CHILD_ENV = "FABLE_ORCHESTRATOR_CHILD"
+ORCHESTRATOR_CHILD_CONTEXT = (
+    "[fable-mode] strict-runner child worker: work only on the assigned task. "
+    "Do not delegate, modify .fable/LEDGER.md, or manage the parent round. "
+    "The orchestrator owns routing, acceptance, retries, and run state. "
+    "Report the task result, then exit normally."
+)
 
 
 def choose_profile(model, lp):
@@ -195,6 +206,16 @@ def main():
     # Cache session model for the spawn guard's model ceiling — unconditional
     # (a project may opt in mid-session), tiny, best-effort.
     save_session_model(data.get("session_id"), data.get("model"))
+
+    if os.environ.get(ORCHESTRATOR_CHILD_ENV) == "1":
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": ORCHESTRATOR_CHILD_CONTEXT,
+            }
+        }, ensure_ascii=False))
+        return 0
+
     fable_dir = find_fable_dir(start_dir(data))
     if not fable_dir:
         return 0  # not opted in -> stay silent (preserve on-demand)

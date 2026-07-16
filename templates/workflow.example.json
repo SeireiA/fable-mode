@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "models": {
+    "lead": "gpt-5.6-sol",
+    "fast": "gpt-5.6-terra",
+    "economy": "gpt-5.4-mini"
+  },
+  "timeout_seconds": 1800,
+  "tasks": [
+    {
+      "id": "card-1",
+      "role": "explorer",
+      "prompt_file": ".fable/tasks/card-1.md",
+      "workspace": ".",
+      "depends_on": [],
+      "acceptance_argv": [
+        "py",
+        "-3",
+        "tests/check_card_1.py"
+      ]
+    }
+  ]
+}

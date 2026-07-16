@@ -130,6 +130,72 @@ Selecting a profile: the user's words above, env `FABLE_ROUTING=quality|balanced
 - The verifier is never weaker than the implementer; verification effort is always max.
 - Mirrors Anthropic's own practice: Opus-class lead + Sonnet-class subagents; Explore on Haiku; inherit when unsure.
 
+### Strict orchestration channel (opt-in)
+
+Native Codex delegation remains the compatible default. `SubagentStart` fires after
+a built-in subagent starts, and the current `PreToolUse` protocol cannot return a
+hard-block decision for that delegation. Those hooks are advisory. Use
+`fable_runner` only when the task requires a preflight ledger gate, exact model
+routing, and runner-owned concurrency:
+
+```text
+py -3 install_codex.py --with-strict-runner
+codex -p fable-strict
+py -3 -m fable_runner run --manifest .fable/workflow.json
+py -3 -m fable_runner status --run-id <id> --json
+py -3 -m fable_runner resume --run-id <id>
+py -3 -m fable_runner cancel --run-id <id>
+```
+
+The installer creates a separately managed `fable-strict` profile with native
+`multi_agent=false` and the skill root prepended to `PYTHONPATH`, so business
+repositories can import the runner without manual path setup. Default installation
+does not change native delegation. A schema-version-1 manifest defines `models`
+(`lead`, `fast`, `economy`), an optional `timeout_seconds`, and tasks. Every task
+supplies `id`, `role` (`explorer`,
+`worker`, or `verifier`), `prompt_file`, `workspace`, `depends_on`, and a non-empty
+`acceptance_argv`. Routing and concurrency are read only from `.fable/LEDGER.md`:
+
+| Routing | Explorer | Worker | Verifier |
+|---|---|---|---|
+| `quality` | lead | lead | lead |
+| `balanced` | fast | lead | lead |
+| `frugal` | economy | fast | lead |
+
+Explorer and verifier tasks use a read-only sandbox; worker tasks use
+workspace-write. Read-only tasks may share a Git worktree, but a writer is
+serialized against every reader or writer in the same worktree. Concurrent
+writers require distinct, already existing worktrees; the runner never creates,
+merges, or removes them. Conservative mode permits at most five concurrent tasks;
+throughput mode uses `max(1, min(16, CPU-2))`, falling back to five when the
+CPU count is unavailable.
+
+The runner executes every acceptance argv itself with `shell=False`. One failure
+resumes the same Codex thread with the captured output; after two failures, a
+below-lead task gets at most one lead-model recovery pass. There is no silent model
+substitution. The model names in the example manifest are templates: validate
+catalog availability and account entitlement before relying on them. Parallelism
+and recovery attempts consume additional tokens and can trigger quota or rate
+limits.
+
+Runner children receive `FABLE_ORCHESTRATOR_CHILD=1` and run with
+`--disable multi_agent`. The child hooks therefore do not apply the parent's
+ledger stop/delegation gate; the parent owns routing, acceptance, retry, and run
+state. This is an engineering guard for cooperative workflows, not a security
+boundary against a malicious process, a modified environment, or direct runner
+bypass.
+
+Run artifacts under `.fable/runs/` persist only recovery metadata such as status
+transitions, exit codes, allowlisted Codex event/model fields, and thread IDs.
+Raw Codex JSONL, stderr, and
+acceptance stdout/stderr stay in memory only for the current retry and are not
+written by default. Keep `.fable/` uncommitted and do not share run artifacts.
+
+`scripts/probe_codex_capabilities.py` measures local CLI features and app-server
+schema exposure without a model call. Pass `--run-state <run.json>` to report
+allowlisted actual-model metadata and peak concurrency from a completed run;
+unobserved values remain null with a reason.
+
 ## Enforcement layer (hooks — mechanics in `hooks/README.md`)
 
 Four hooks enforce or reinforce the most-shirked rules. Armed **per project** by a `.fable/` directory (searched upward, bounded at the git root); without it they pass through silently. Pressure applies **per round** via `.fable/LEDGER.md`:
@@ -145,7 +211,7 @@ PAUSED: reason                                 <- a line anywhere: enforcement o
 be attributable. Evidence notes must be substantive: `evidence: ok` counts as
 missing.)
 
-- **Delegation Guard** (SubagentStart): when a Codex subagent starts with no **open** card, injects a design-gate warning and tells substantial delegated work to return to the lead. Current Codex cannot cancel built-in subagents from this event, so this one guard is advisory rather than a hard block.
+- **Delegation Guard** (SubagentStart): when a Codex subagent starts with no **open** card, injects a design-gate warning and tells substantial delegated work to return to the lead. Current Codex cannot cancel built-in subagents from this event, and `PreToolUse` cannot supply the missing pre-start block, so native delegation remains advisory. Hard preflight applies only to the `fable_runner` channel.
 - **Fail-Streak Reminder** (PostToolUse Bash, advisory): every 3rd consecutive failing command injects the attribution ladder — stops grinding on the wrong layer mechanically, not by willpower.
 - **Close Guard** (Stop): blocks ending the turn while open `- [ ]` items remain, **and** while any `- [x]` lacks an `-- evidence:` note (evidence-on-close: adjectives don't close cards).
 - **Profile Injector** (SessionStart): injects tier + routing + habits, **sized to the ledger state** — full when a round is starting/active, minimal when idle, one line when paused.

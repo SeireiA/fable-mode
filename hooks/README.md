@@ -10,6 +10,13 @@
 py -3 ../install_codex.py
 ```
 
+仅在需要严格 runner 时生成独立 profile：
+
+```powershell
+py -3 ../install_codex.py --with-strict-runner
+codex -p fable-strict
+```
+
 完整安装说明见 [`../README.md`](../README.md)，适配细节见
 [`../README.codex.zh-CN.md`](../README.codex.zh-CN.md)。
 
@@ -36,7 +43,8 @@ py -3 fable_lint.py <项目目录>
 - 存在 `.fable/` 时，守卫对当前项目生效。
 - 不存在 `.fable/` 时，Hooks 静默放行，不改变会话行为。
 
-所有脚本都采用 fail-open 策略。脚本内部异常不会阻塞 Codex。
+除下述 strict runner 子进程的精简上下文外，Hooks 只在找到 `.fable/` 时运行。所有脚本
+都采用 fail-open 策略，脚本内部异常不会阻塞 Codex。
 
 ## 账本格式
 
@@ -63,7 +71,26 @@ TIER: conservative
 ## 当前限制
 
 `SubagentStart` 事件不能取消已经启动的内置子代理。因此，委派守卫只能在启动后注入提示，
-无法实现启动前的硬拦截。其他已映射事件可以执行预期的守卫行为。
+无法实现启动前的硬拦截。当前 `PreToolUse` 协议也不能返回可阻止内置委派的决定。原生
+Hooks 是兼容且 fail-open 的流程强化层，不是硬委派门禁。
+
+## Strict runner 子进程
+
+只有 `fable_runner` 通道在启动卡片子进程前验证开放账本、manifest、模型目录、路径和依赖图。
+它通过 `codex exec --disable multi_agent` 运行卡片，并设置
+`FABLE_ORCHESTRATOR_CHILD=1`。守卫对该变量的处理如下：
+
+- Profile Injector 只注入“完成当前卡片、不得再次委派”的精简上下文。
+- Delegation Guard 静默放行，不用父账本再次判断子进程的委派资格。
+- Close Guard 静默放行，由父 runner 负责验收、重试和运行状态。
+- Fail-Streak Reminder 始终只是提示，不会阻止子进程退出。
+
+这样可避免多个子进程争用共享 `.fable/LEDGER.md`，同时保留父 runner 的单一状态所有权。
+它只约束通过 runner 正常启动的进程；环境变量可被修改、脚本可被绕过，因此不是抗恶意
+绕过的安全边界。
+
+runner 的公共命令为 `run`、`status`、`resume` 和 `cancel`。manifest 字段、模型路由矩阵、
+共享 worktree 串行规则及额度风险见 [`../README.zh-CN.md`](../README.zh-CN.md)。
 
 ## 安全设计
 

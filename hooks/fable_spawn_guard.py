@@ -19,6 +19,8 @@ warning into a subagent that starts without an open ledger card. It cannot
 mechanically cancel the start, so this path is intentionally advisory.
 
 Inert unless a `.fable/` dir is found. Fail-open on any error.
+Strict-runner children (`FABLE_ORCHESTRATOR_CHILD=1`) pass silently because
+their parent orchestrator owns delegation and ledger enforcement.
 
 Exit codes: 0 = allow or inject Codex context; 2 = block a pre-tool call.
 Env:
@@ -36,6 +38,8 @@ from _fable_common import (  # noqa: E402
     read_hook_input, start_dir, find_fable_dir, ledger_path, parse_ledger,
     model_tier, load_session_model,
 )
+
+ORCHESTRATOR_CHILD_ENV = "FABLE_ORCHESTRATOR_CHILD"
 
 
 def payload_len(tool_name, tool_input):
@@ -120,6 +124,9 @@ def codex_subagent_start(data):
 
 def main():
     data = read_hook_input()
+    if os.environ.get(ORCHESTRATOR_CHILD_ENV) == "1":
+        return 0
+
     if data.get("hook_event_name") == "SubagentStart":
         return codex_subagent_start(data)
 

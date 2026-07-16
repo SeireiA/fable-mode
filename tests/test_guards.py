@@ -13,10 +13,16 @@ def check(name, got, want):
     if ok: passed += 1
     else: failed += 1
 
-def run(script, payload):
+def run_process(script, payload, env=None):
+    process_env = dict(os.environ)
+    process_env.pop("FABLE_ORCHESTRATOR_CHILD", None)
+    process_env.update(env or {})
     p = subprocess.run([sys.executable, script], input=json.dumps(payload),
-                       capture_output=True, text=True)
-    return p.returncode
+                       capture_output=True, text=True, env=process_env)
+    return p
+
+def run(script, payload):
+    return run_process(script, payload).returncode
 
 def mkproj(with_fable=False, ledger=None, git=False):
     d = tempfile.mkdtemp(prefix="fbtest_")
@@ -74,6 +80,21 @@ inner = os.path.join(outer, "repo"); os.mkdir(inner); os.mkdir(os.path.join(inne
 check("spawn/git-boundary-stops", run(SPAWN, {"cwd": inner, "tool_name": "Agent",
       "tool_input": {"prompt": BIG}}), 0)
 
+# 8. strict-runner children bypass the parent ledger gate without output
+d = proj(with_fable=True, git=True)
+p = run_process(SPAWN, {"cwd": d, "tool_name": "Agent",
+                        "tool_input": {"prompt": BIG}},
+                env={"FABLE_ORCHESTRATOR_CHILD": "1"})
+check("spawn/orchestrator-child-allows", p.returncode, 0)
+check("spawn/orchestrator-child-silent", p.stdout == "" and p.stderr == "", True)
+
+# 9. the SubagentStart advisory is silent for strict-runner children too
+p = run_process(SPAWN, {"cwd": d, "hook_event_name": "SubagentStart"},
+                env={"FABLE_ORCHESTRATOR_CHILD": "1"})
+check("spawn/orchestrator-child-subagent-allows", p.returncode, 0)
+check("spawn/orchestrator-child-subagent-silent",
+      p.stdout == "" and p.stderr == "", True)
+
 # ---- Close guard ----
 # 1. no .fable -> allow stop
 d = proj(git=True)
@@ -101,6 +122,13 @@ check("close/no-ledger-file", run(CLOSE, {"cwd": d}), 0)
 p = subprocess.run([sys.executable, CLOSE], input="}{bad", capture_output=True,
                    text=True, cwd=proj(git=True))
 check("close/malformed-failopen", p.returncode, 0)
+
+# 7. strict-runner children may exit while the parent ledger remains open
+d = proj(with_fable=True, git=True, ledger="- [ ] 1. parent card\n")
+p = run_process(CLOSE, {"cwd": d},
+                env={"FABLE_ORCHESTRATOR_CHILD": "1"})
+check("close/orchestrator-child-allows", p.returncode, 0)
+check("close/orchestrator-child-silent", p.stdout == "" and p.stderr == "", True)
 
 # ---- Evidence-on-close (close guard) ----
 # 1. all closed but a [x] lacks evidence -> BLOCK
@@ -130,9 +158,12 @@ check("evidence/loop-safety", run(CLOSE, {"cwd": d, "stop_hook_active": True}), 
 # ---- Fail-streak reminder (PostToolUse Bash) ----
 STREAK = os.path.join(HOOKS, "fable_fail_streak.py")
 
-def run_streak(payload):
+def run_streak(payload, env=None):
+    process_env = dict(os.environ)
+    process_env.pop("FABLE_ORCHESTRATOR_CHILD", None)
+    process_env.update(env or {})
     p = subprocess.run([sys.executable, STREAK], input=json.dumps(payload),
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, env=process_env)
     return p.returncode, p.stdout
 
 FAIL_RESP = {"stdout": "", "stderr": "boom", "exitCode": 1}
@@ -171,6 +202,15 @@ sid3 = "fbtest-streak-3-" + RUN_TAG
 outs = [run_streak({"cwd": d3, "session_id": sid3, "tool_name": "Bash",
                     "tool_response": FAIL_RESP}) for _ in range(4)]
 check("streak/paused-off", all("additionalContext" not in o for _, o in outs), True)
+
+# 5. advisory reminders never prevent a strict-runner child from exiting
+d4 = proj(with_fable=True, git=True, ledger="- [ ] 1. child card\n")
+sid4 = "fbtest-streak-child-" + RUN_TAG
+outs = [run_streak({"cwd": d4, "session_id": sid4, "tool_name": "Bash",
+                    "tool_response": FAIL_RESP},
+                   env={"FABLE_ORCHESTRATOR_CHILD": "1"}) for _ in range(3)]
+check("streak/orchestrator-child-all-exit-0",
+      all(rc == 0 for rc, _ in outs), True)
 
 # ---- fable_lint ----
 LINT = os.path.join(HOOKS, "fable_lint.py")
@@ -216,7 +256,9 @@ check("lint/defer-without-reason-flagged", rc == 1 and out.count("FINDING") == 1
 INJ = os.path.join(HOOKS, "fable_profile_inject.py")
 
 def run_env(script, payload, env=None):
-    e = dict(os.environ); e.update(env or {})
+    e = dict(os.environ)
+    e.pop("FABLE_ORCHESTRATOR_CHILD", None)
+    e.update(env or {})
     p = subprocess.run([sys.executable, script], input=json.dumps(payload),
                        capture_output=True, text=True, env=e)
     return p.returncode
@@ -273,6 +315,16 @@ check("ceiling/no-false-positive-on-prose", run_env(SPAWN, {"cwd": d,
 d = proj(git=True)
 check("ceiling/no-fable-inert", run_env(SPAWN, {"cwd": d, "session_id": "fbtest-ceil-gpt51",
       "tool_name": "Agent", "tool_input": {"prompt": SMALL, "model": "gpt-5.2-codex"}}), 0)
+
+# 9. strict-runner children bypass the ceiling as well as the design gate
+d = proj(with_fable=True, git=True, ledger=LEDGER_OK)
+p = run_process(SPAWN, {"cwd": d, "session_id": "fbtest-ceil-gpt51",
+                        "tool_name": "Agent",
+                        "tool_input": {"prompt": SMALL,
+                                       "model": "gpt-5.2-codex"}},
+                env={"FABLE_ORCHESTRATOR_CHILD": "1"})
+check("ceiling/orchestrator-child-allows", p.returncode, 0)
+check("ceiling/orchestrator-child-silent", p.stdout == "" and p.stderr == "", True)
 
 # ---- PAUSED semantics ----
 # a. open card + PAUSED -> close guard allows stop

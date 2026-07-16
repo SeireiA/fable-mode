@@ -5,6 +5,7 @@ import json, os, shutil, subprocess, tempfile, sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INSTALL_SRC = os.path.join(REPO, "install.sh")
+BASH = os.environ.get("FABLE_TEST_BASH", "bash")
 NAMES = ["fable_profile_inject.py", "fable_spawn_guard.py",
          "fable_fail_streak.py", "fable_close_guard.py"]
 passed = failed = 0
@@ -26,14 +27,47 @@ def make_skill(root, sub="skills/fable-mode"):
     return d
 
 
-def run(skill_dir, cfg, *args):
-    env = dict(os.environ, CLAUDE_CONFIG_DIR=cfg)
-    return subprocess.run(["bash", os.path.join(skill_dir, "install.sh"), *args],
-                          capture_output=True, text=True, env=env)
+def bash_path(value: str) -> str:
+    if os.name != "nt":
+        return value
+    value = value.replace("\\", "/")
+    drive, tail = os.path.splitdrive(value)
+    if len(drive) == 2 and drive[1] == ":":
+        return f"/{drive[0].lower()}{tail}"
+    return value
 
 
-def load(cfg):
-    with open(os.path.join(cfg, "settings.json"), encoding="utf-8") as f:
+def command_contains_path(command: str, path: str) -> bool:
+    normalized = command.replace("\\", "/")
+    candidates = {path.replace("\\", "/"), bash_path(path)}
+    return any(candidate in normalized for candidate in candidates)
+
+
+def run(
+    skill_dir: str,
+    cfg: str,
+    *args: str,
+) -> subprocess.CompletedProcess[str]:
+    env = dict(os.environ, CLAUDE_CONFIG_DIR=bash_path(cfg))
+    script = bash_path(os.path.join(skill_dir, "install.sh"))
+    return subprocess.run([BASH, script, *args],
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", env=env)
+
+
+def load(
+    cfg: str,
+    result: subprocess.CompletedProcess[str] | None = None,
+) -> dict:
+    settings = os.path.join(cfg, "settings.json")
+    if result is not None and not os.path.exists(settings):
+        raise AssertionError(
+            "installer did not create settings.json "
+            f"(exit={result.returncode})\n"
+            f"stdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}"
+        )
+    with open(settings, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -49,11 +83,13 @@ try:
 
     # A. fresh install into an empty config dir
     r = run(skill, cfg)
-    d = load(cfg)
+    d = load(cfg, r)
     check("install/fresh-creates-4-events",
           r.returncode == 0 and set(d["hooks"]) ==
           {"SessionStart", "PreToolUse", "PostToolUse", "Stop"})
-    check("install/absolute-paths", all(skill in c for c in cmds(d) if "fable_" in c))
+    check("install/absolute-paths",
+          all(command_contains_path(c, skill)
+              for c in cmds(d) if "fable_" in c))
     check("install/matcher-on-pretooluse",
           d["hooks"]["PreToolUse"][0].get("matcher") == "Agent|Task|Workflow")
     check("install/matcher-on-posttooluse",
