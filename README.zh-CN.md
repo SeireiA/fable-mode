@@ -245,6 +245,7 @@ py -3 scripts/probe_codex_capabilities.py
 ## 上游与许可证
 
 本项目基于 [`cozytab/fable5-mode`](https://github.com/cozytab/fable5-mode)，并在本仓库
-维护 Codex Hooks 兼容性修改。
+维护 Codex Hooks 兼容性修改。上游核对基线和后续检查方法见
+[`UPSTREAM_TRACKING.md`](UPSTREAM_TRACKING.md)。
 
 [MIT](LICENSE) (c) 2026 cozytab 及贡献者。
